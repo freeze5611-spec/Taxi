@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>的士每日收支記錄</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f2f2f7; margin: 0; padding: 15px; }
+    .card { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom: 15px; }
+    h2, h3 { margin-top: 0; color: #1c1c1e; }
+    label { display: block; margin-top: 10px; font-weight: bold; color: #3a3a3c; }
+    input, select { width: 100%; padding: 12px; margin-top: 5px; border: 1px solid #c7c7cc; border-radius: 8px; font-size: 16px; box-sizing: border-box; -webkit-appearance: none; }
+    .btn { display: block; width: 100%; padding: 15px; background-color: #007aff; color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; margin-top: 15px; cursor: pointer; text-align: center; }
+    .btn-green { background-color: #34c759; }
+    .btn-orange { background-color: #ff9500; }
+    .btn-red { background-color: #ff3b30; }
+    .btn-group { display: flex; gap: 10px; margin-top: 5px; }
+    .btn-group button { flex: 1; padding: 12px; border: 1px solid #007aff; background: #fff; color: #007aff; border-radius: 8px; font-weight: bold; font-size: 16px; }
+    .btn-group button.active { background: #007aff; color: #fff; }
+    .hidden { display: none !important; }
+    .order-item { border-bottom: 1px solid #e5e5ea; padding: 10px 0; }
+  </style>
+</head>
+<body>
+
+  <!-- 1. 開工頁面 -->
+  <div id="setup-page" class="card">
+    <h2>🚕 每日開工登記</h2>
+    <label>日期</label>
+    <input type="date" id="work-date">
+    <label>的士車牌</label>
+    <input type="text" id="taxi-plate" placeholder="例如：AB1234">
+    <label>今日車租 ($)</label>
+    <input type="number" pattern="[0-9]*" id="taxi-rent" placeholder="例如：450">
+    <button type="button" class="btn btn-green" onclick="startShift()">開始開工</button>
+  </div>
+
+  <!-- 2. 接客頁面 (步驟一) -->
+  <div id="pickup-page" class="card hidden">
+    <h3>📍 步驟一：接客</h3>
+    <label>客源</label>
+    <div class="btn-group">
+      <button type="button" id="type-street" class="active" onclick="selectType('街客')">街客</button>
+      <button type="button" id="type-uber" onclick="selectType('Uber/網約')">Uber / 網約</button>
+    </div>
+    <label>上車地點</label>
+    <input type="text" id="start-loc" placeholder="例如：旺角">
+    <button type="button" class="btn" onclick="confirmPickup()">接客 / 行程中</button>
+  </div>
+
+  <!-- 3. 落客頁面 (步驟二) -->
+  <div id="dropoff-page" class="card hidden">
+    <h3>🏁 步驟二：落客</h3>
+    <label>下車地點</label>
+    <input type="text" id="end-loc" placeholder="例如：中環">
+    <label>車資 ($)</label>
+    <input type="number" pattern="[0-9]*" id="fare" placeholder="例如：85">
+    <label>隧道費選擇</label>
+    <select id="tunnel-type">
+      <option value="無">無</option>
+      <option value="單程隧道費">單程隧道費</option>
+      <option value="雙程隧道費">雙程隧道費</option>
+    </select>
+    <label>隧道費金額 ($)</label>
+    <input type="number" pattern="[0-9]*" id="tunnel-fee" value="0">
+    <button type="button" class="btn btn-orange" onclick="confirmDropoff()">完成此單</button>
+  </div>
+
+  <!-- 4. 今日概覽與收工上傳 -->
+  <div id="summary-card" class="card hidden">
+    <h3>📊 今日概覽 (已完成 <span id="order-count">0</span> 單)</h3>
+    <div id="order-list"></div>
+    <button type="button" class="btn btn-red" onclick="uploadToGoogleSheets()">收工並上傳至 Google Sheets</button>
+  </div>
+
+  <script>
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbzZMOOv-oHEjimr-A3rLdCvz0iALUIU_y9Yzyyk54hkVtdAHjzc3dCQXxK8pOdd9CXTMw/exec";
+    
+    let currentOrder = {};
+    let dailyOrders = [];
+    let passengerType = '街客';
+
+    // 自動預設今日日期
+    try {
+      document.getElementById('work-date').value = new Date().toISOString().split('T')[0];
+    } catch(e) {}
+
+    function selectType(type) {
+      passengerType = type;
+      document.getElementById('type-street').className = (type === '街客') ? 'active' : '';
+      document.getElementById('type-uber').className = (type === 'Uber/網約') ? 'active' : '';
+    }
+
+    function startShift() {
+      const plate = document.getElementById('taxi-plate').value.trim();
+      const rent = document.getElementById('taxi-rent').value.trim();
+      
+      if (plate === '' || rent === '') { 
+        alert('請先輸入車牌及車租！'); 
+        return; 
+      }
+      
+      document.getElementById('setup-page').classList.add('hidden');
+      document.getElementById('pickup-page').classList.remove('hidden');
+      document.getElementById('summary-card').classList.remove('hidden');
+    }
+
+    function confirmPickup() {
+      const startLoc = document.getElementById('start-loc').value.trim();
+      if (startLoc === '') { alert('請輸入上車地點！'); return; }
+
+      const now = new Date();
+      currentOrder = {
+        type: passengerType,
+        startLoc: startLoc,
+        startTime: String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0')
+      };
+
+      document.getElementById('pickup-page').classList.add('hidden');
+      document.getElementById('dropoff-page').classList.remove('hidden');
+    }
+
+    function confirmDropoff() {
+      const endLoc = document.getElementById('end-loc').value.trim();
+      const fare = document.getElementById('fare').value.trim();
+      if (endLoc === '' || fare === '') { alert('請輸入下車地點及車資！'); return; }
+
+      const now = new Date();
+      currentOrder.endLoc = endLoc;
+      currentOrder.endTime = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+      currentOrder.fare = fare;
+      currentOrder.tunnelType = document.getElementById('tunnel-type').value;
+      currentOrder.tunnelFee = document.getElementById('tunnel-fee').value || 0;
+
+      dailyOrders.push(currentOrder);
+      updateSummary();
+
+      // 清空欄位並重置回接客頁面
+      document.getElementById('start-loc').value = '';
+      document.getElementById('end-loc').value = '';
+      document.getElementById('fare').value = '';
+      document.getElementById('tunnel-fee').value = '0';
+      document.getElementById('tunnel-type').value = '無';
+
+      document.getElementById('dropoff-page').classList.add('hidden');
+      document.getElementById('pickup-page').classList.remove('hidden');
+    }
+
+    function updateSummary() {
+      document.getElementById('order-count').innerText = dailyOrders.length;
+      const listDiv = document.getElementById('order-list');
+      listDiv.innerHTML = '';
+      dailyOrders.forEach((o, index) => {
+        listDiv.innerHTML += `
+          <div class="order-item">
+            <b>#${index + 1} [${o.type}]</b> ${o.startTime} ${o.startLoc} ➔ ${o.endTime} ${o.endLoc} | <b>$${Number(o.fare) + Number(o.tunnelFee)}</b>
+          </div>
+        `;
+      });
+    }
+
+    function uploadToGoogleSheets() {
+      if (dailyOrders.length === 0) { alert('今日仲未有任何車程記錄！'); return; }
+      
+      const payload = {
+        date: document.getElementById('work-date').value,
+        plate: document.getElementById('taxi-plate').value,
+        rent: document.getElementById('taxi-rent').value,
+        orders: dailyOrders
+      };
+
+      fetch(GAS_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }).then(() => {
+        alert('成功上傳到 Google Sheets！');
+        location.reload();
+      }).catch(err => {
+        alert('上傳失敗：' + err);
+      });
+    }
+  </script>
+</body>
+</html>
