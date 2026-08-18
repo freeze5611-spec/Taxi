@@ -23,6 +23,7 @@
     .action-btns { display: flex; gap: 5px; margin-left: 10px; }
     .btn-edit { background-color: #007aff; color: white; border: none; border-radius: 6px; padding: 6px 10px; font-size: 14px; font-weight: bold; cursor: pointer; }
     .btn-delete { background-color: #ff3b30; color: white; border: none; border-radius: 6px; padding: 6px 10px; font-size: 14px; font-weight: bold; cursor: pointer; }
+    .status-tag { display: inline-block; padding: 3px 8px; background: #e5e5ea; border-radius: 4px; font-size: 12px; margin-bottom: 8px; }
   </style>
 </head>
 <body>
@@ -55,6 +56,7 @@
   <!-- 3. 落客頁面 (步驟二) -->
   <div id="dropoff-page" class="card hidden">
     <h3>🏁 步驟二：落客</h3>
+    <div class="status-tag">進行中行程：<span id="ongoing-info"></span></div>
     <label>下車地點</label>
     <input type="text" id="end-loc" placeholder="例如：中環">
     <label>車資 ($)</label>
@@ -108,29 +110,78 @@
 
     <hr style="margin: 20px 0; border: none; border-top: 1px solid #e5e5ea;">
     <label>今日石油氣費用 ($)</label>
-    <input type="number" pattern="[0-9]*" id="taxi-gas" placeholder="例如：180" value="0">
+    <input type="number" pattern="[0-9]*" id="taxi-gas" placeholder="例如：180" value="0" oninput="saveCurrentState()">
 
     <button type="button" class="btn btn-red" onclick="uploadToGoogleSheets()">收工並上傳至 Google Sheets</button>
   </div>
 
   <script>
-    // 已更新為你發送的新 URL
     const GAS_URL = "https://script.google.com/macros/s/AKfycbyhApwl5pwXYpGPkTjEedrWhKJkiHKgJ426QFpUxYzYAnQbJqsxAAhQcTgY0r0Ez68IYg/exec";
     
-    let currentOrder = {};
+    let currentOrder = null;
     let dailyOrders = [];
     let passengerType = '街客';
+    let isShiftStarted = false;
     let editingIndex = -1;
 
-    // 自動預設今日日期
-    try {
+    // 頁面載入時自動恢復舊狀態
+    window.onload = function() {
       document.getElementById('work-date').value = new Date().toISOString().split('T')[0];
-    } catch(e) {}
+      loadSavedState();
+    };
+
+    function saveCurrentState() {
+      const state = {
+        isShiftStarted: isShiftStarted,
+        workDate: document.getElementById('work-date').value,
+        plate: document.getElementById('taxi-plate').value,
+        rent: document.getElementById('taxi-rent').value,
+        gas: document.getElementById('taxi-gas').value,
+        dailyOrders: dailyOrders,
+        currentOrder: currentOrder,
+        passengerType: passengerType
+      };
+      localStorage.setItem('taxi_app_state', JSON.stringify(state));
+    }
+
+    function loadSavedState() {
+      const saved = localStorage.getItem('taxi_app_state');
+      if (!saved) return;
+
+      try {
+        const state = JSON.parse(saved);
+        if (state.workDate) document.getElementById('work-date').value = state.workDate;
+        if (state.plate) document.getElementById('taxi-plate').value = state.plate;
+        if (state.rent) document.getElementById('taxi-rent').value = state.rent;
+        if (state.gas) document.getElementById('taxi-gas').value = state.gas;
+        if (state.dailyOrders) dailyOrders = state.dailyOrders;
+        if (state.currentOrder) currentOrder = state.currentOrder;
+        if (state.passengerType) selectType(state.passengerType);
+
+        if (state.isShiftStarted) {
+          isShiftStarted = true;
+          document.getElementById('setup-page').classList.add('hidden');
+          document.getElementById('summary-card').classList.remove('hidden');
+
+          if (currentOrder && currentOrder.startLoc) {
+            // 如果剛才卡在「落客」畫面
+            document.getElementById('pickup-page').classList.add('hidden');
+            document.getElementById('dropoff-page').classList.remove('hidden');
+            document.getElementById('ongoing-info').innerText = `[${currentOrder.type}] ${currentOrder.startTime} 上車 (${currentOrder.startLoc})`;
+          } else {
+            // 回到接客畫面
+            document.getElementById('pickup-page').classList.remove('hidden');
+          }
+          updateSummary();
+        }
+      } catch(e) { console.error('恢復狀態失敗', e); }
+    }
 
     function selectType(type) {
       passengerType = type;
       document.getElementById('type-street').className = (type === '街客') ? 'active' : '';
       document.getElementById('type-uber').className = (type === 'Uber/網約') ? 'active' : '';
+      saveCurrentState();
     }
 
     function startShift() {
@@ -142,9 +193,11 @@
         return; 
       }
       
+      isShiftStarted = true;
       document.getElementById('setup-page').classList.add('hidden');
       document.getElementById('pickup-page').classList.remove('hidden');
       document.getElementById('summary-card').classList.remove('hidden');
+      saveCurrentState();
     }
 
     function confirmPickup() {
@@ -158,8 +211,10 @@
         startTime: String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0')
       };
 
+      document.getElementById('ongoing-info').innerText = `[${currentOrder.type}] ${currentOrder.startTime} 上車 (${currentOrder.startLoc})`;
       document.getElementById('pickup-page').classList.add('hidden');
       document.getElementById('dropoff-page').classList.remove('hidden');
+      saveCurrentState();
     }
 
     function confirmDropoff() {
@@ -175,6 +230,7 @@
       currentOrder.tunnelFee = document.getElementById('tunnel-fee').value || 0;
 
       dailyOrders.push(currentOrder);
+      currentOrder = null; // 清除未完成單號
       updateSummary();
 
       // 清空欄位並重置回接客頁面
@@ -186,6 +242,7 @@
 
       document.getElementById('dropoff-page').classList.add('hidden');
       document.getElementById('pickup-page').classList.remove('hidden');
+      saveCurrentState();
     }
 
     function openEditPage(index) {
@@ -202,7 +259,6 @@
       document.getElementById('edit-tunnel-type').value = o.tunnelType;
       document.getElementById('edit-tunnel-fee').value = o.tunnelFee;
 
-      // 隱藏其他頁面，只顯示編輯頁面
       document.getElementById('pickup-page').classList.add('hidden');
       document.getElementById('dropoff-page').classList.add('hidden');
       document.getElementById('summary-card').classList.add('hidden');
@@ -225,12 +281,17 @@
 
       updateSummary();
       cancelEdit();
+      saveCurrentState();
     }
 
     function cancelEdit() {
       editingIndex = -1;
       document.getElementById('edit-page').classList.add('hidden');
-      document.getElementById('pickup-page').classList.remove('hidden');
+      if (currentOrder && currentOrder.startLoc) {
+        document.getElementById('dropoff-page').classList.remove('hidden');
+      } else {
+        document.getElementById('pickup-page').classList.remove('hidden');
+      }
       document.getElementById('summary-card').classList.remove('hidden');
     }
 
@@ -238,6 +299,7 @@
       if (confirm('確定要刪除第 ' + (index + 1) + ' 單記錄嗎？')) {
         dailyOrders.splice(index, 1);
         updateSummary();
+        saveCurrentState();
       }
     }
 
@@ -278,6 +340,7 @@
         body: JSON.stringify(payload)
       }).then(() => {
         alert('成功上傳到 Google Sheets！');
+        localStorage.removeItem('taxi_app_state'); // 上傳成功後清空暫存，準備新一天
         location.reload();
       }).catch(err => {
         alert('上傳失敗：' + err);
