@@ -18,7 +18,11 @@
     .btn-group button { flex: 1; padding: 12px; border: 1px solid #007aff; background: #fff; color: #007aff; border-radius: 8px; font-weight: bold; font-size: 16px; }
     .btn-group button.active { background: #007aff; color: #fff; }
     .hidden { display: none !important; }
-    .order-item { border-bottom: 1px solid #e5e5ea; padding: 10px 0; }
+    .order-item { border-bottom: 1px solid #e5e5ea; padding: 12px 0; display: flex; justify-content: space-between; align-items: center; }
+    .order-info { flex: 1; }
+    .action-btns { display: flex; gap: 5px; margin-left: 10px; }
+    .btn-edit { background-color: #007aff; color: white; border: none; border-radius: 6px; padding: 6px 10px; font-size: 14px; font-weight: bold; cursor: pointer; }
+    .btn-delete { background-color: #ff3b30; color: white; border: none; border-radius: 6px; padding: 6px 10px; font-size: 14px; font-weight: bold; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -66,19 +70,57 @@
     <button type="button" class="btn btn-orange" onclick="confirmDropoff()">完成此單</button>
   </div>
 
-  <!-- 4. 今日概覽與收工上傳 -->
+  <!-- 4. 修改資料頁面 -->
+  <div id="edit-page" class="card hidden">
+    <h3>✏️ 修改單號 <span id="edit-order-id"></span> 資料</h3>
+    <label>客源</label>
+    <select id="edit-type">
+      <option value="街客">街客</option>
+      <option value="Uber/網約">Uber/網約</option>
+    </select>
+    <label>上車時間</label>
+    <input type="text" id="edit-start-time">
+    <label>上車地點</label>
+    <input type="text" id="edit-start-loc">
+    <label>下車時間</label>
+    <input type="text" id="edit-end-time">
+    <label>下車地點</label>
+    <input type="text" id="edit-end-loc">
+    <label>車資 ($)</label>
+    <input type="number" pattern="[0-9]*" id="edit-fare">
+    <label>隧道費選擇</label>
+    <select id="edit-tunnel-type">
+      <option value="無">無</option>
+      <option value="單程隧道費">單程隧道費</option>
+      <option value="雙程隧道費">雙程隧道費</option>
+    </select>
+    <label>隧道費金額 ($)</label>
+    <input type="number" pattern="[0-9]*" id="edit-tunnel-fee">
+    
+    <button type="button" class="btn btn-green" onclick="saveEdit()">儲存修改</button>
+    <button type="button" class="btn btn-red" onclick="cancelEdit()" style="margin-top: 8px;">取消</button>
+  </div>
+
+  <!-- 5. 今日概覽與收工上傳 -->
   <div id="summary-card" class="card hidden">
     <h3>📊 今日概覽 (已完成 <span id="order-count">0</span> 單)</h3>
     <div id="order-list"></div>
+
+    <hr style="margin: 20px 0; border: none; border-top: 1px solid #e5e5ea;">
+    <label>今日石油氣費用 ($)</label>
+    <input type="number" pattern="[0-9]*" id="taxi-gas" placeholder="例如：180" value="0">
+
     <button type="button" class="btn btn-red" onclick="uploadToGoogleSheets()">收工並上傳至 Google Sheets</button>
   </div>
 
   <script>
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbzZMOOv-oHEjimr-A3rLdCvz0iALUIU_y9Yzyyk54hkVtdAHjzc3dCQXxK8pOdd9CXTMw/exec";
+    // 已更新為你發送的新 URL
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbyhApwl5pwXYpGPkTjEedrWhKJkiHKgJ426QFpUxYzYAnQbJqsxAAhQcTgY0r0Ez68IYg/exec";
     
     let currentOrder = {};
     let dailyOrders = [];
     let passengerType = '街客';
+    let editingIndex = -1;
 
     // 自動預設今日日期
     try {
@@ -146,6 +188,59 @@
       document.getElementById('pickup-page').classList.remove('hidden');
     }
 
+    function openEditPage(index) {
+      editingIndex = index;
+      const o = dailyOrders[index];
+
+      document.getElementById('edit-order-id').innerText = '#' + (index + 1);
+      document.getElementById('edit-type').value = o.type;
+      document.getElementById('edit-start-time').value = o.startTime;
+      document.getElementById('edit-start-loc').value = o.startLoc;
+      document.getElementById('edit-end-time').value = o.endTime;
+      document.getElementById('edit-end-loc').value = o.endLoc;
+      document.getElementById('edit-fare').value = o.fare;
+      document.getElementById('edit-tunnel-type').value = o.tunnelType;
+      document.getElementById('edit-tunnel-fee').value = o.tunnelFee;
+
+      // 隱藏其他頁面，只顯示編輯頁面
+      document.getElementById('pickup-page').classList.add('hidden');
+      document.getElementById('dropoff-page').classList.add('hidden');
+      document.getElementById('summary-card').classList.add('hidden');
+      document.getElementById('edit-page').classList.remove('hidden');
+    }
+
+    function saveEdit() {
+      if (editingIndex < 0) return;
+
+      dailyOrders[editingIndex] = {
+        type: document.getElementById('edit-type').value,
+        startTime: document.getElementById('edit-start-time').value.trim(),
+        startLoc: document.getElementById('edit-start-loc').value.trim(),
+        endTime: document.getElementById('edit-end-time').value.trim(),
+        endLoc: document.getElementById('edit-end-loc').value.trim(),
+        fare: document.getElementById('edit-fare').value.trim(),
+        tunnelType: document.getElementById('edit-tunnel-type').value,
+        tunnelFee: document.getElementById('edit-tunnel-fee').value || 0
+      };
+
+      updateSummary();
+      cancelEdit();
+    }
+
+    function cancelEdit() {
+      editingIndex = -1;
+      document.getElementById('edit-page').classList.add('hidden');
+      document.getElementById('pickup-page').classList.remove('hidden');
+      document.getElementById('summary-card').classList.remove('hidden');
+    }
+
+    function deleteOrder(index) {
+      if (confirm('確定要刪除第 ' + (index + 1) + ' 單記錄嗎？')) {
+        dailyOrders.splice(index, 1);
+        updateSummary();
+      }
+    }
+
     function updateSummary() {
       document.getElementById('order-count').innerText = dailyOrders.length;
       const listDiv = document.getElementById('order-list');
@@ -153,7 +248,13 @@
       dailyOrders.forEach((o, index) => {
         listDiv.innerHTML += `
           <div class="order-item">
-            <b>#${index + 1} [${o.type}]</b> ${o.startTime} ${o.startLoc} ➔ ${o.endTime} ${o.endLoc} | <b>$${Number(o.fare) + Number(o.tunnelFee)}</b>
+            <div class="order-info">
+              <b>#${index + 1} [${o.type}]</b> ${o.startTime} ${o.startLoc} ➔ ${o.endTime} ${o.endLoc} | <b>$${Number(o.fare) + Number(o.tunnelFee)}</b>
+            </div>
+            <div class="action-btns">
+              <button type="button" class="btn-edit" onclick="openEditPage(${index})">修改</button>
+              <button type="button" class="btn-delete" onclick="deleteOrder(${index})">刪除</button>
+            </div>
           </div>
         `;
       });
@@ -166,6 +267,7 @@
         date: document.getElementById('work-date').value,
         plate: document.getElementById('taxi-plate').value,
         rent: document.getElementById('taxi-rent').value,
+        gas: document.getElementById('taxi-gas').value || 0,
         orders: dailyOrders
       };
 
